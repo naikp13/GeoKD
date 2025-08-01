@@ -1,4 +1,4 @@
-# GEOKD: Geospatial  Knowledge Distillation
+# GeoKD: Geospatial Knowledge Distillation
 
 GEOKD is an open-source Python framework designed to simplify **knowledge distillation (KD)** and **compressive fine-tuning** of Geospatial foundation models such as Prithvi, TerraMind etc., and other multi-modal architectures. With a focus on flexibility, reproducibility, and efficiency, GEOKD aims to distill large geosptial foundation models into smaller, faster, and resource-efficient versions for applications such on-board processing and edge-computing while maintaining high performance.
 
