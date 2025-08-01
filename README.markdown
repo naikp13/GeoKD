@@ -4,6 +4,8 @@ GEOKD is an open-source Python framework designed to simplify **knowledge distil
 
 The repository is under development and will be published soon....
 
+<img src="https://raw.githubusercontent.com/naikp13/GeoKD/main/LPS'25 Poster_PN.jpg" alt="XAI" width="800"/>
+
 ## Contact
 
 For questions or support, open an issue or email parthnaik1993@gmail.com.
