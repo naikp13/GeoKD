@@ -346,3 +346,222 @@ class MultiScaleDistillationLoss(nn.Module):
             total_loss += scale_loss
         
         return total_loss / len(self.scales)
+
+
+class LogitDistillation(nn.Module):
+    """Pure Logit Distillation (Soft Label Distillation).
+    
+    Uses only the teacher's final output probabilities to guide the student.
+    This is the classic knowledge distillation approach from Hinton et al.
+    """
+    
+    def __init__(self, temperature: float = 4.0, alpha: float = 0.7):
+        super().__init__()
+        self.temperature = temperature
+        self.alpha = alpha  # Weight for distillation vs task loss
+        self.kl_div = nn.KLDivLoss(reduction='batchmean')
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.mse_loss = nn.MSELoss()
+    
+    def forward(self, 
+                student_logits: torch.Tensor,
+                teacher_logits: torch.Tensor,
+                targets: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        """Calculate logit distillation loss.
+        
+        Args:
+            student_logits: Raw outputs from student model
+            teacher_logits: Raw outputs from teacher model  
+            targets: Ground truth labels (optional)
+            
+        Returns:
+            Dictionary containing loss components
+        """
+        losses = {}
+        device = student_logits.device
+        
+        # Soft target distillation loss
+        student_soft = F.log_softmax(student_logits / self.temperature, dim=-1)
+        teacher_soft = F.softmax(teacher_logits / self.temperature, dim=-1)
+        
+        distillation_loss = self.kl_div(student_soft, teacher_soft) * (self.temperature ** 2)
+        losses['distillation_loss'] = distillation_loss
+        
+        # Task-specific loss (hard targets)
+        task_loss = torch.tensor(0.0, device=device)
+        if targets is not None:
+            if targets.dtype == torch.long:  # Classification
+                task_loss = self.ce_loss(student_logits, targets)
+            else:  # Regression
+                task_loss = self.mse_loss(student_logits, targets)
+        losses['task_loss'] = task_loss
+        
+        # Combined loss
+        total_loss = self.alpha * distillation_loss + (1 - self.alpha) * task_loss
+        losses['total_loss'] = total_loss
+        
+        return losses
+
+
+class FeatureDistillation(nn.Module):
+    """Feature Distillation using intermediate representations.
+    
+    Student mimics the teacher's intermediate feature maps rather than
+    just the final outputs. Useful for transferring spatial and semantic
+    knowledge from deeper layers.
+    """
+    
+    def __init__(self, 
+                 feature_loss_weight: float = 1.0,
+                 adaptation_layers: Optional[Dict[str, nn.Module]] = None):
+        super().__init__()
+        self.feature_loss_weight = feature_loss_weight
+        self.mse_loss = nn.MSELoss()
+        self.adaptation_layers = adaptation_layers or {}
+        
+    def forward(self,
+                student_features: Dict[str, torch.Tensor],
+                teacher_features: Dict[str, torch.Tensor],
+                targets: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        """Calculate feature distillation loss.
+        
+        Args:
+            student_features: Dictionary of intermediate features from student
+            teacher_features: Dictionary of intermediate features from teacher
+            targets: Ground truth (optional, for task loss)
+            
+        Returns:
+            Dictionary containing loss components
+        """
+        losses = {}
+        device = next(iter(student_features.values())).device
+        
+        # Feature matching loss
+        feature_loss = torch.tensor(0.0, device=device)
+        matched_layers = 0
+        
+        for layer_name in student_features.keys():
+            if layer_name in teacher_features:
+                student_feat = student_features[layer_name]
+                teacher_feat = teacher_features[layer_name]
+                
+                # Adapt feature dimensions if needed
+                if layer_name in self.adaptation_layers:
+                    student_feat = self.adaptation_layers[layer_name](student_feat)
+                elif student_feat.shape != teacher_feat.shape:
+                    student_feat = self._adapt_feature_dimensions(student_feat, teacher_feat)
+                
+                # Calculate MSE loss between features
+                layer_loss = self.mse_loss(student_feat, teacher_feat.detach())
+                feature_loss += layer_loss
+                matched_layers += 1
+        
+        if matched_layers > 0:
+            feature_loss = feature_loss / matched_layers
+        
+        losses['feature_loss'] = feature_loss
+        losses['total_loss'] = self.feature_loss_weight * feature_loss
+        
+        return losses
+    
+    def _adapt_feature_dimensions(self, student_feat: torch.Tensor, teacher_feat: torch.Tensor) -> torch.Tensor:
+        """Adapt student features to match teacher dimensions."""
+        if student_feat.shape == teacher_feat.shape:
+            return student_feat
+            
+        # Handle channel dimension mismatch
+        if student_feat.shape[1] != teacher_feat.shape[1]:
+            # Use 1x1 conv to match channels
+            if not hasattr(self, f'_adapt_conv_{student_feat.shape[1]}_{teacher_feat.shape[1]}'):
+                conv = nn.Conv2d(student_feat.shape[1], teacher_feat.shape[1], 1, bias=False)
+                conv = conv.to(student_feat.device)
+                setattr(self, f'_adapt_conv_{student_feat.shape[1]}_{teacher_feat.shape[1]}', conv)
+            
+            conv = getattr(self, f'_adapt_conv_{student_feat.shape[1]}_{teacher_feat.shape[1]}')
+            student_feat = conv(student_feat)
+        
+        # Handle spatial dimension mismatch
+        if student_feat.shape[2:] != teacher_feat.shape[2:]:
+            student_feat = F.interpolate(student_feat, size=teacher_feat.shape[2:], 
+                                       mode='bilinear', align_corners=False)
+        
+        return student_feat
+
+
+class HybridDistillation(nn.Module):
+    """Hybrid Distillation combining logit and feature distillation.
+    
+    This is the most comprehensive approach, combining both final output
+    distillation and intermediate feature matching. Most effective in practice.
+    """
+    
+    def __init__(self,
+                 temperature: float = 4.0,
+                 alpha: float = 0.7,  # Weight for distillation vs task loss
+                 beta: float = 0.3,   # Weight for feature vs logit distillation
+                 adaptation_layers: Optional[Dict[str, nn.Module]] = None):
+        super().__init__()
+        self.temperature = temperature
+        self.alpha = alpha
+        self.beta = beta
+        
+        # Initialize component distillation modules
+        self.logit_distiller = LogitDistillation(temperature, alpha=1.0)  # Pure logit loss
+        self.feature_distiller = FeatureDistillation(feature_loss_weight=1.0, 
+                                                    adaptation_layers=adaptation_layers)
+        
+        # Task loss
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.mse_loss = nn.MSELoss()
+    
+    def forward(self,
+                student_logits: torch.Tensor,
+                teacher_logits: torch.Tensor,
+                student_features: Dict[str, torch.Tensor],
+                teacher_features: Dict[str, torch.Tensor],
+                targets: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        """Calculate hybrid distillation loss.
+        
+        Args:
+            student_logits: Final outputs from student
+            teacher_logits: Final outputs from teacher
+            student_features: Intermediate features from student
+            teacher_features: Intermediate features from teacher
+            targets: Ground truth labels (optional)
+            
+        Returns:
+            Dictionary containing all loss components
+        """
+        losses = {}
+        device = student_logits.device
+        
+        # 1. Logit distillation loss
+        logit_losses = self.logit_distiller(student_logits, teacher_logits, targets=None)
+        logit_distill_loss = logit_losses['distillation_loss']
+        losses['logit_distillation'] = logit_distill_loss
+        
+        # 2. Feature distillation loss
+        feature_losses = self.feature_distiller(student_features, teacher_features)
+        feature_distill_loss = feature_losses['feature_loss']
+        losses['feature_distillation'] = feature_distill_loss
+        
+        # 3. Task-specific loss
+        task_loss = torch.tensor(0.0, device=device)
+        if targets is not None:
+            if targets.dtype == torch.long:  # Classification
+                task_loss = self.ce_loss(student_logits, targets)
+            else:  # Regression
+                task_loss = self.mse_loss(student_logits, targets)
+        losses['task_loss'] = task_loss
+        
+        # 4. Combined hybrid loss
+        # Combine logit and feature distillation
+        distillation_loss = (1 - self.beta) * logit_distill_loss + self.beta * feature_distill_loss
+        
+        # Combine distillation with task loss
+        total_loss = self.alpha * distillation_loss + (1 - self.alpha) * task_loss
+        
+        losses['distillation_loss'] = distillation_loss
+        losses['total_loss'] = total_loss
+        
+        return losses

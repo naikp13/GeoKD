@@ -13,12 +13,14 @@ class GeospatialDistiller:
     def __init__(self, 
                  teacher_model: BaseGeospatialModel,
                  student_model: BaseGeospatialModel,
+                 distillation_mode: str = 'hybrid',  # 'logit', 'feature', 'hybrid'
                  distillation_config: str = None,
                  device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
         
         self.teacher = teacher_model.to(device)
         self.student = student_model.to(device)
         self.device = device
+        self.distillation_mode = distillation_mode
         
         # Load configuration
         if distillation_config:
@@ -27,15 +29,84 @@ class GeospatialDistiller:
         else:
             self.config = self._default_config()
             
-        # Initialize loss function
-        self.distillation_loss = DistillationLoss(self.config['loss'])
+        # Initialize appropriate distillation loss
+        self._init_distillation_loss()
         
         # Initialize optimizer
         self.optimizer = self._init_optimizer()
         
         # Set teacher to eval mode
         self.teacher.eval()
+    
+    def _init_distillation_loss(self):
+        """Initialize distillation loss based on mode."""
+        if self.distillation_mode == 'logit':
+            from .losses import LogitDistillation
+            self.distillation_loss = LogitDistillation(
+                temperature=self.config['loss']['temperature'],
+                alpha=self.config['loss']['alpha']
+            )
+        elif self.distillation_mode == 'feature':
+            from .losses import FeatureDistillation
+            self.distillation_loss = FeatureDistillation(
+                feature_loss_weight=self.config['loss'].get('feature_loss_weight', 1.0)
+            )
+        elif self.distillation_mode == 'hybrid':
+            from .losses import HybridDistillation
+            self.distillation_loss = HybridDistillation(
+                temperature=self.config['loss']['temperature'],
+                alpha=self.config['loss']['alpha'],
+                beta=self.config['loss'].get('beta', 0.3)
+            )
+        else:
+            # Fallback to original comprehensive loss
+            from .losses import DistillationLoss
+            self.distillation_loss = DistillationLoss(self.config['loss'])
+    
+    def distill_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """Enhanced distillation step supporting different modes."""
+        self.student.train()
+        self.optimizer.zero_grad()
         
+        inputs = batch['input'].to(self.device)
+        targets = batch.get('target', None)
+        if targets is not None:
+            targets = targets.to(self.device)
+        
+        # Forward pass through both models
+        with torch.no_grad():
+            if self.distillation_mode in ['feature', 'hybrid']:
+                teacher_outputs, teacher_features = self.teacher(inputs, return_features=True)
+            else:
+                teacher_outputs = self.teacher(inputs)
+                teacher_features = {}
+        
+        if self.distillation_mode in ['feature', 'hybrid']:
+            student_outputs, student_features = self.student(inputs, return_features=True)
+        else:
+            student_outputs = self.student(inputs)
+            student_features = {}
+        
+        # Calculate loss based on distillation mode
+        if self.distillation_mode == 'logit':
+            losses = self.distillation_loss(student_outputs, teacher_outputs, targets)
+        elif self.distillation_mode == 'feature':
+            losses = self.distillation_loss(student_features, teacher_features, targets)
+        elif self.distillation_mode == 'hybrid':
+            losses = self.distillation_loss(student_outputs, teacher_outputs, 
+                                          student_features, teacher_features, targets)
+        else:
+            # Original comprehensive loss
+            losses = self.distillation_loss(student_outputs, teacher_outputs,
+                                          student_features, teacher_features, targets)
+        
+        # Backward pass
+        losses['total_loss'].backward()
+        self.optimizer.step()
+        
+        # Convert to float for logging
+        return {k: v.item() if torch.is_tensor(v) else v for k, v in losses.items()}
+    
     def _default_config(self) -> Dict[str, Any]:
         """Default distillation configuration."""
         return {
@@ -74,41 +145,6 @@ class GeospatialDistiller:
             )
         else:
             raise ValueError(f"Unsupported optimizer: {opt_config['name']}")
-    
-    def distill_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
-        """Single distillation step."""
-        self.optimizer.zero_grad()
-        
-        # Move batch to device
-        inputs = batch['input'].to(self.device)
-        targets = batch.get('target', None)
-        if targets is not None:
-            targets = targets.to(self.device)
-        
-        # Teacher forward pass (no gradients)
-        with torch.no_grad():
-            teacher_outputs = self.teacher(inputs)
-            teacher_features = self.teacher.get_features(inputs)
-        
-        # Student forward pass
-        student_outputs = self.student(inputs)
-        student_features = self.student.get_features(inputs)
-        
-        # Calculate distillation loss
-        loss_dict = self.distillation_loss(
-            student_outputs=student_outputs,
-            teacher_outputs=teacher_outputs,
-            student_features=student_features,
-            teacher_features=teacher_features,
-            targets=targets
-        )
-        
-        # Backward pass
-        total_loss = loss_dict['total_loss']
-        total_loss.backward()
-        self.optimizer.step()
-        
-        return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
     
     def distill(self, 
                 train_dataloader: DataLoader,
