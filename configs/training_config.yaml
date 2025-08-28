@@ -1,0 +1,65 @@
+# Training configuration for SEN12MS knowledge distillation
+
+# Teacher model configuration
+teacher:
+  model_name: "prithvi_2.0"
+  model_path: "ibm-nasa-geospatial/Prithvi-100M"
+  input_channels: 15  # S1 (2) + S2 (13)
+  freeze_backbone: true
+
+# Student model configuration
+student:
+  model_name: "resnet_student"
+  architecture: "resnet18"
+  num_classes: 17  # SEN12MS land cover classes
+  in_channels: 15  # S1 (2) + S2 (13)
+  pretrained: true
+
+# Loss configuration
+loss:
+  temperature: 4.0
+  alpha: 0.7  # Weight for KD loss vs task loss
+  feature_loss_weight: 0.3
+  attention_loss_weight: 0.1
+  relation_loss_weight: 0.1
+  spatial_loss_weight: 0.1
+
+# Optimizer configuration
+optimizer:
+  type: "adamw"
+  lr: 1e-4
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+
+# Scheduler configuration
+scheduler:
+  type: "cosine"
+  T_max: 100
+  eta_min: 1e-6
+
+# Training configuration
+training:
+  batch_size: 16
+  epochs: 100
+  device: "cuda"
+  num_workers: 4
+  gradient_clip: 1.0
+  save_every: 10
+  validate_every: 1
+
+# Data configuration
+data:
+  target_size: [256, 256]
+  modalities: ["s1", "s2", "lc"]
+  normalize: true
+  augmentation:
+    rotation: true
+    flip: true
+    brightness_contrast: true
+    noise: true
+
+# Logging configuration
+logging:
+  wandb_project: "geokd-sen12ms"
+  log_every: 100
+  save_dir: "./checkpoints"
