@@ -1,6 +1,6 @@
 # GeoKD: Geospatial Knowledge Distillation Framework
 
-A simplified framework for knowledge distillation between geospatial foundation models **Prithvi 2.0** and **TerraMind**.
+A simple framework for knowledge distillation for geospatial foundation models.
 
 ## 🌍 Overview
 
