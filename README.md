@@ -87,12 +87,7 @@ MIT License - see LICENSE file for details.
 ## 📚 Citation
 
 ```bibtex
-@article{geokd2024,
-  title={GeoKD: Geospatial Knowledge Distillation for Efficient Earth Observation},
-  author={Your Name},
-  journal={arXiv preprint},
-  year={2024}
-}
+
 ```
 
 ## 🙏 Acknowledgments
