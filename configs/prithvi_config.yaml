@@ -1,0 +1,38 @@
+# Prithvi 2.0 Model Configuration
+
+model:
+  name: "Prithvi-2.0"
+  hf_model_name: "ibm-nasa-geospatial/Prithvi-EO-2.0-600M"
+  input_channels: 12
+  image_size: 224
+  patch_size: 16
+  
+# Training configuration
+training:
+  batch_size: 16
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  epochs: 100
+  warmup_epochs: 10
+  
+# Data configuration
+data:
+  modalities: ["S2L2A"]
+  bands: ["BLUE", "GREEN", "RED", "NIR_NARROW", "SWIR_1", "SWIR_2"]
+  normalization: "z_score"
+  augmentation:
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    rotation: 15
+    
+# Distillation configuration (when used as student)
+distillation:
+  temperature: 4.0
+  alpha: 0.7
+  feature_loss_weight: 0.3
+  feature_layers: ["encoder.layer.6", "encoder.layer.11"]
+  
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "f1_score", "iou"]
+  save_predictions: true

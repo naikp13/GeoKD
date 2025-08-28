@@ -1,0 +1,51 @@
+# TerraMind Model Configuration
+
+model:
+  name: "TerraMind-1.0"
+  hf_model_name: "ibm-esa-geospatial/TerraMind-1.0-large"
+  modalities: ["S2L2A", "S1GRD"]
+  merge_method: "mean"  # Options: mean, max, concat, dict, None
+  
+# Multi-modal configuration
+modality_config:
+  S2L2A:
+    bands: ["BLUE", "GREEN", "RED", "NIR_NARROW", "SWIR_1", "SWIR_2"]
+    channels: 12
+  S1GRD:
+    polarizations: ["VV", "VH"]
+    channels: 2
+  DEM:
+    channels: 1
+    
+# Training configuration
+training:
+  batch_size: 8  # Smaller due to multi-modal complexity
+  learning_rate: 5e-5
+  weight_decay: 1e-4
+  epochs: 50
+  gradient_accumulation_steps: 4
+  
+# Generation configuration
+generation:
+  timesteps: 10
+  guidance_scale: 7.5
+  output_modalities: ["S1GRD", "LULC"]
+  standardize: true
+  
+# Thinking-in-Modalities (TiM)
+tim:
+  enabled: false
+  intermediate_modalities: ["LULC"]
+  
+# Distillation configuration
+distillation:
+  temperature: 5.0
+  alpha: 0.8
+  feature_loss_weight: 0.2
+  cross_modal_weight: 0.3
+  
+# Data preprocessing
+preprocessing:
+  standardization: "pretrain_stats"  # Use pre-training statistics
+  spatial_resolution: 224
+  temporal_aggregation: "mean"
