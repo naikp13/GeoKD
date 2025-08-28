@@ -20,5 +20,3 @@ This repository provides tools and methodologies for knowledge distillation in t
 - **Specialty**: Multimodal any-to-any Earth observation generation
 - **Training**: 500B tokens from 9M spatiotemporally aligned samples
 - **HuggingFace**: [ibm-esa-geospatial/TerraMind-1.0-large](https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-large)
-
-## 📁 Repository Structure
